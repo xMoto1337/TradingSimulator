@@ -1,11 +1,11 @@
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "notes": " ",
-  "pub_date": "2026-02-06T00:00:00Z",
+  "pub_date": "2026-02-07T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL1RTRzJRKzRtZjNLcEMwNlpzWEtpZjVJbzQvVlhncEQvT2p3NXFndUZra0NRNEhIWWhhWC9qdjhSVS9jdVB1Sk85WExKNHdoZUZNMGdRa3N4V1M5aVJVYjMvYXVoTHdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwNDMxMzE2CWZpbGU6VHJhZGluZyBTaW11bGF0b3JfMS4zLjBfeDY0LXNldHVwLmV4ZQpvazI4K1pGUkVWY0poaGo2NVkvakR3bjRnMnJnWkREczZva01jTjFRb1NVR3h5RlR3c3NxbS9RTGhxb1V5aG9iSDZ2bXg4d2lBckk3a1o4cG1rZ0REQT09Cg==",
-      "url": "https://github.com/xMoto1337/TradingSimulator/raw/main/Trading%20Simulator_1.3.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL1RTRzJRKzRtZnl3NGhvVmlDSU51RGNzWWZjOFlRNk9Ea2FHd2YzZERFS2xiOGwzU0s3UnBBWk1QUVM0VjlkOUNRUkx4czRHbGZ0OUdNTVU0aGFQWlFUOTBucDlWNlFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwNDcyMjQ1CWZpbGU6VHJhZGluZyBTaW11bGF0b3JfMS40LjBfeDY0LXNldHVwLmV4ZQpCMnc1UjdoTXpNYUhzcFdCWnBNdXV1K1dZOHYxZXFQVEI0cG5UQUpwVmtocXBYaVJkN3A5dUp3YWRIUVcxTmttK01DcVRjeUp1eE5EL0s4UkxJUFFDZz09Cg==",
+      "url": "https://github.com/xMoto1337/TradingSimulator/raw/main/Trading%20Simulator_1.4.0_x64-setup.exe"
     }
   }
 }
