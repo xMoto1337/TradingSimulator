@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { apiUrl } from '../api';
 import { useTradingStore } from '../stores/tradingStore';
 import type { Candle, Timeframe } from '../types/trading';
 
@@ -88,7 +89,7 @@ export function useMarketData(disabled = false) {
         const url = `https://api.exchange.coinbase.com/products/${productId}/candles?granularity=${granularity}&start=${start}&end=${now}`;
         console.log('[Market] Fetching:', url);
 
-        const response = await fetch(url);
+        const response = await fetch(apiUrl(url));
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }

@@ -7,8 +7,18 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const isTauri = !!(window as any).__TAURI__;
 
-// Proxy URL for Yahoo Finance (CORS-blocked). Set via env or defaults to relative /api.
+// Proxy URL for CORS-blocked APIs. Set via env or defaults to relative /api.
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || '/api';
+
+/**
+ * In web mode, routes fetch requests through our CORS proxy for APIs that
+ * don't send browser CORS headers (Coinbase Exchange, etc.).
+ * In Tauri mode, returns the URL unchanged (webview doesn't enforce CORS).
+ */
+export function apiUrl(url: string): string {
+  if (isTauri) return url;
+  return `${PROXY_BASE}/proxy?url=${encodeURIComponent(url)}`;
+}
 
 // ─── Types ───────────────────────────────────────────────────────────
 

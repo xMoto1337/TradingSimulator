@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { fetchStockCandles, fetchStockQuote, fetchDexPrice, fetchDexStats } from '../api';
+import { fetchStockCandles, fetchStockQuote, fetchDexPrice, fetchDexStats, apiUrl } from '../api';
 import { useChartStore } from '../stores/chartStore';
 import { useTradingStore } from '../stores/tradingStore';
 import type { Candle, Timeframe } from '../types/trading';
@@ -93,7 +93,7 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
         const now = Math.floor(Date.now() / 1000);
         const start = now - granularity * 300;
         const url = `https://api.exchange.coinbase.com/products/${productId}/candles?granularity=${granularity}&start=${start}&end=${now}`;
-        const response = await fetch(url);
+        const response = await fetch(apiUrl(url));
         if (cancelled) return;
 
         if (response.ok) {
@@ -306,7 +306,7 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
       if (network) {
         try {
           if (!poolAddress) {
-            const dexResp = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`, { cache: 'no-store' });
+            const dexResp = await fetch(apiUrl(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`), { cache: 'no-store' });
             const dexData = await dexResp.json();
             if (dexData.pairs?.length > 0) {
               const pair = dexData.pairs.find((p: { chainId: string }) =>
@@ -318,8 +318,8 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
           if (poolAddress && !cancelled) {
             const tfConfig = GECKO_TF[timeframe] || { tf: 'hour', aggregate: 1 };
             const resp = await fetch(
-              `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}/ohlcv/${tfConfig.tf}?aggregate=${tfConfig.aggregate}&limit=300`,
-              { headers: { 'Accept': 'application/json' }, cache: 'no-store' }
+              apiUrl(`https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}/ohlcv/${tfConfig.tf}?aggregate=${tfConfig.aggregate}&limit=300`),
+              { cache: 'no-store' }
             );
             if (resp.ok && !cancelled) {
               const data = await resp.json();

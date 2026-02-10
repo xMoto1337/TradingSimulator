@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { apiUrl } from '../api';
 import { useTradingStore } from '../stores/tradingStore';
 import type { Candle, Timeframe } from '../types/trading';
 
@@ -96,7 +97,7 @@ export function useDexChartData(disabled = false) {
         if (!poolAddress) {
           // Use DEXScreener to find the best pool
           const dexResponse = await fetch(
-            `https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`,
+            apiUrl(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`),
             { cache: 'no-store' }
           );
           const dexData = await dexResponse.json();
@@ -120,11 +121,8 @@ export function useDexChartData(disabled = false) {
 
         // Fetch OHLCV data from GeckoTerminal
         const response = await fetch(
-          `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}/ohlcv/${tfConfig.tf}?aggregate=${tfConfig.aggregate}&limit=300`,
-          {
-            headers: { 'Accept': 'application/json' },
-            cache: 'no-store',
-          }
+          apiUrl(`https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}/ohlcv/${tfConfig.tf}?aggregate=${tfConfig.aggregate}&limit=300`),
+          { cache: 'no-store' }
         );
 
         if (!response.ok) {
