@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d0d0d"/>
+      <stop offset="100%" stop-color="#1a1a1a"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#00ff41" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#00ff41" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="184" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="184" stroke="#00ff41" stroke-width="20" fill="none" opacity="0.5"/>
+  <!-- Glow -->
+  <rect x="102" y="154" width="820" height="512" fill="url(#glow)"/>
+  <!-- Candlesticks -->
+  <rect x="258.5" y="563" width="15" height="358" fill="#ff0040" opacity="0.7"/><rect x="217" y="666" width="98" height="205" rx="15" fill="#ff0040"/><rect x="422.5" y="358" width="15" height="410" fill="#00ff41" opacity="0.7"/><rect x="381" y="461" width="98" height="256" rx="15" fill="#00ff41"/><rect x="586.5" y="205" width="15" height="410" fill="#00ff41" opacity="0.7"/><rect x="545" y="307" width="98" height="256" rx="15" fill="#00ff41"/><rect x="750.5" y="123" width="15" height="369" fill="#00ff41" opacity="0.7"/><rect x="709" y="205" width="98" height="205" rx="15" fill="#00ff41"/>
+</svg>

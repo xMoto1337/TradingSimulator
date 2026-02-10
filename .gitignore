@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-web/
+src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Private keys - NEVER commit these!
+src-tauri/keys/
+*.key
+*.pem
+
+# Tauri build artifacts
+src-tauri/WixTools/
+src-tauri/gen/
+
+# Temporary files
+*.tmp
+*.temp
