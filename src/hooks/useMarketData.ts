@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { apiUrl } from '../api';
+import { apiUrl, isTauri } from '../api';
 import { useTradingStore } from '../stores/tradingStore';
 import type { Candle, Timeframe } from '../types/trading';
 
@@ -50,6 +50,7 @@ const CANDLE_COUNT: Record<Timeframe, number> = {
 
 export function useMarketData(disabled = false) {
   const wsRef = useRef<WebSocket | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const candleRef = useRef<Candle | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCleaningUp = useRef(false);
@@ -147,55 +148,132 @@ export function useMarketData(disabled = false) {
     setConnectionStatus('connecting');
     fetchHistoricalData();
 
-    // Connect to Coinbase WebSocket for live updates
-    const ws = new WebSocket(COINBASE_WS);
+    if (isTauri) {
+      // ── Tauri: WebSocket for real-time updates (no CORS in webview) ──
+      const ws = new WebSocket(COINBASE_WS);
 
-    ws.onopen = () => {
-      console.log('[Market] WebSocket connected, subscribing...');
+      ws.onopen = () => {
+        console.log('[Market] WebSocket connected, subscribing...');
+        ws.send(JSON.stringify({
+          type: 'subscribe',
+          product_ids: [productId],
+          channels: ['ticker'],
+        }));
+      };
 
-      // Subscribe to ticker channel for real-time price updates
-      ws.send(JSON.stringify({
-        type: 'subscribe',
-        product_ids: [productId],
-        channels: ['ticker'],
-      }));
-    };
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
+          if (data.type === 'subscriptions') {
+            console.log('[Market] Subscribed successfully');
+            setConnectionStatus('connected');
+          }
 
-        if (data.type === 'subscriptions') {
-          console.log('[Market] Subscribed successfully');
-          setConnectionStatus('connected');
+          if (data.type === 'ticker' && data.product_id === productId) {
+            const price = parseFloat(data.price);
+            const tradeTime = new Date(data.time).getTime();
+
+            setCurrentPrice(price);
+
+            setTicker({
+              symbol: currentSymbol,
+              price: price,
+              change24h: price - parseFloat(data.open_24h || price),
+              changePercent24h: data.open_24h
+                ? ((price - parseFloat(data.open_24h)) / parseFloat(data.open_24h)) * 100
+                : 0,
+              high24h: parseFloat(data.high_24h || price),
+              low24h: parseFloat(data.low_24h || price),
+              volume24h: parseFloat(data.volume_24h || 0),
+            });
+
+            if (candleRef.current) {
+              const candleInterval = granularity * 1000;
+              const currentCandleStart = Math.floor(tradeTime / candleInterval) * candleInterval;
+
+              if (candleRef.current.time === currentCandleStart) {
+                candleRef.current = {
+                  time: currentCandleStart,
+                  open: candleRef.current.open,
+                  high: Math.max(candleRef.current.high, price),
+                  low: Math.min(candleRef.current.low, price),
+                  close: price,
+                  volume: candleRef.current.volume,
+                };
+                updateLastCandle(candleRef.current);
+              } else if (currentCandleStart > candleRef.current.time) {
+                console.log(`[Market] New candle at ${new Date(currentCandleStart).toISOString()}`);
+                candleRef.current = {
+                  time: currentCandleStart,
+                  open: price,
+                  high: price,
+                  low: price,
+                  close: price,
+                  volume: 0,
+                };
+                updateLastCandle(candleRef.current);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[Market] Parse error:', error);
         }
+      };
 
-        if (data.type === 'ticker' && data.product_id === productId) {
-          const price = parseFloat(data.price);
-          const tradeTime = new Date(data.time).getTime();
+      ws.onerror = (error) => {
+        console.error('[Market] WebSocket error:', error);
+        setConnectionStatus('error');
+      };
+
+      ws.onclose = (event) => {
+        console.log(`[Market] WebSocket closed: ${event.code}`);
+        setConnectionStatus('disconnected');
+
+        if (!isCleaningUp.current && event.code !== 1000) {
+          reconnectTimeoutRef.current = setTimeout(() => {
+            if (!isCleaningUp.current) {
+              console.log('[Market] Reconnecting...');
+              setConnectionStatus('connecting');
+            }
+          }, 3000);
+        }
+      };
+
+      wsRef.current = ws;
+    } else {
+      // ── Web/PWA: REST polling (WebSocket unreliable across browsers) ──
+      const pollPrice = async () => {
+        try {
+          const statsUrl = `https://api.exchange.coinbase.com/products/${productId}/stats`;
+          const response = await fetch(apiUrl(statsUrl));
+          if (!response.ok) return;
+          const stats = await response.json();
+
+          const price = parseFloat(stats.last);
+          if (!price || isNaN(price)) return;
 
           setCurrentPrice(price);
+          setConnectionStatus('connected');
 
-          // Update ticker with 24h stats
+          const openPrice = parseFloat(stats.open);
           setTicker({
             symbol: currentSymbol,
-            price: price,
-            change24h: price - parseFloat(data.open_24h || price),
-            changePercent24h: data.open_24h
-              ? ((price - parseFloat(data.open_24h)) / parseFloat(data.open_24h)) * 100
-              : 0,
-            high24h: parseFloat(data.high_24h || price),
-            low24h: parseFloat(data.low_24h || price),
-            volume24h: parseFloat(data.volume_24h || 0),
+            price,
+            change24h: openPrice ? price - openPrice : 0,
+            changePercent24h: openPrice ? ((price - openPrice) / openPrice) * 100 : 0,
+            high24h: parseFloat(stats.high) || price,
+            low24h: parseFloat(stats.low) || price,
+            volume24h: parseFloat(stats.volume) || 0,
           });
 
-          // Update current candle based on granularity
+          // Update last candle with live price
           if (candleRef.current) {
-            const candleInterval = granularity * 1000; // Convert to ms
+            const tradeTime = Date.now();
+            const candleInterval = granularity * 1000;
             const currentCandleStart = Math.floor(tradeTime / candleInterval) * candleInterval;
 
             if (candleRef.current.time === currentCandleStart) {
-              // Update existing candle
               candleRef.current = {
                 time: currentCandleStart,
                 open: candleRef.current.open,
@@ -206,8 +284,6 @@ export function useMarketData(disabled = false) {
               };
               updateLastCandle(candleRef.current);
             } else if (currentCandleStart > candleRef.current.time) {
-              // New candle period started
-              console.log(`[Market] New candle at ${new Date(currentCandleStart).toISOString()}`);
               candleRef.current = {
                 time: currentCandleStart,
                 open: price,
@@ -219,33 +295,14 @@ export function useMarketData(disabled = false) {
               updateLastCandle(candleRef.current);
             }
           }
+        } catch (error) {
+          console.error('[Market] Poll error:', error);
         }
-      } catch (error) {
-        console.error('[Market] Parse error:', error);
-      }
-    };
+      };
 
-    ws.onerror = (error) => {
-      console.error('[Market] WebSocket error:', error);
-      setConnectionStatus('error');
-    };
-
-    ws.onclose = (event) => {
-      console.log(`[Market] WebSocket closed: ${event.code}`);
-      setConnectionStatus('disconnected');
-
-      // Auto-reconnect if not intentionally closed
-      if (!isCleaningUp.current && event.code !== 1000) {
-        reconnectTimeoutRef.current = setTimeout(() => {
-          if (!isCleaningUp.current) {
-            console.log('[Market] Reconnecting...');
-            setConnectionStatus('connecting');
-          }
-        }, 3000);
-      }
-    };
-
-    wsRef.current = ws;
+      pollPrice();
+      pollRef.current = setInterval(pollPrice, 2000);
+    }
 
     return () => {
       console.log('[Market] Cleaning up...');
@@ -257,6 +314,10 @@ export function useMarketData(disabled = false) {
       if (wsRef.current) {
         wsRef.current.close(1000);
         wsRef.current = null;
+      }
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
       }
     };
   }, [currentSymbol, currentTimeframe, disabled]);
