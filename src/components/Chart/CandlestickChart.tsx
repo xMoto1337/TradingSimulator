@@ -93,6 +93,7 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
 
   const prevTimeframeRef = useRef(currentTimeframe);
   const prevSymbolRef = useRef(currentSymbol);
+  const prevFirstCandleTimeRef = useRef(0);
   const initialLoadRef = useRef(true);
 
   // Drawing state
@@ -588,16 +589,19 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
     candleSeriesRef.current.setData(candleData);
     volumeSeriesRef.current.setData(volumeData);
 
-    // Only fitContent on initial load, timeframe change, or symbol change
+    // Only fitContent on initial load, timeframe change, symbol change, or new dataset
+    const firstCandleTime = candles[0]?.time || 0;
     const timeframeChanged = prevTimeframeRef.current !== currentTimeframe;
     const symbolChanged = prevSymbolRef.current !== currentSymbol;
-    if (chartRef.current && (initialLoadRef.current || timeframeChanged || symbolChanged)) {
+    const datasetChanged = firstCandleTime !== prevFirstCandleTimeRef.current;
+    if (chartRef.current && (initialLoadRef.current || timeframeChanged || symbolChanged || datasetChanged)) {
       chartRef.current.timeScale().fitContent();
       initialLoadRef.current = false;
       prevTimeframeRef.current = currentTimeframe;
       prevSymbolRef.current = currentSymbol;
+      prevFirstCandleTimeRef.current = firstCandleTime;
     }
-  }, [candles.length, currentTimeframe, currentSymbol]);
+  }, [candles.length, currentTimeframe, currentSymbol, candles[0]?.time]);
 
   // Update last candle in real-time with current price (without re-fitting)
   useEffect(() => {

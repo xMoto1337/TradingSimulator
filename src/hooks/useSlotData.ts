@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { fetchStockCandles, fetchStockQuote, fetchDexPrice, fetchDexStats, apiUrl, isTauri } from '../api';
+import { fetchStockCandles, fetchStockQuote, fetchDexPrice, fetchDexStats, apiUrl } from '../api';
 import { useChartStore } from '../stores/chartStore';
 import { useTradingStore } from '../stores/tradingStore';
 import type { Candle, Timeframe } from '../types/trading';
@@ -40,6 +40,7 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
   const candleRef = useRef<Candle | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCandleSyncRef = useRef(0);
   const saveSlotData = useChartStore((s) => s.saveSlotData);
 
@@ -68,6 +69,10 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
     };
 
     function doCleanup() {
+      if (wsTimeoutRef.current) {
+        clearTimeout(wsTimeoutRef.current);
+        wsTimeoutRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.close(1000);
         wsRef.current = null;
@@ -133,91 +138,36 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
 
       if (cancelled) return;
 
-      if (isTauri) {
-        // Tauri: WebSocket for live updates
-        const ws = new WebSocket(COINBASE_WS);
+      // Helper: update current candle with live price
+      const updateSlotCandle = (price: number, tradeTime: number) => {
+        if (!candleRef.current) return;
+        const candleInterval = granularity * 1000;
+        const currentCandleStart = Math.floor(tradeTime / candleInterval) * candleInterval;
 
-        ws.onopen = () => {
-          ws.send(JSON.stringify({
-            type: 'subscribe',
-            product_ids: [productId],
-            channels: ['ticker'],
-          }));
-        };
+        if (candleRef.current.time === currentCandleStart) {
+          candleRef.current = {
+            time: currentCandleStart,
+            open: candleRef.current.open,
+            high: Math.max(candleRef.current.high, price),
+            low: Math.min(candleRef.current.low, price),
+            close: price,
+            volume: candleRef.current.volume,
+          };
+        } else if (currentCandleStart > candleRef.current.time) {
+          candleRef.current = {
+            time: currentCandleStart,
+            open: price, high: price, low: price, close: price, volume: 0,
+          };
+        }
+      };
 
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
+      // REST polling fallback
+      let pollingStarted = false;
+      const startPolling = () => {
+        if (pollingStarted || cancelled) return;
+        pollingStarted = true;
+        console.log(`[Slot ${slotId}] Falling back to REST polling`);
 
-            if (data.type === 'subscriptions') {
-              saveSlotData(slotId, { connectionStatus: 'connected' });
-            }
-
-            if (data.type === 'ticker' && data.product_id === productId) {
-              const price = parseFloat(data.price);
-              const tradeTime = new Date(data.time).getTime();
-
-              const ticker = {
-                symbol,
-                price,
-                change24h: price - parseFloat(data.open_24h || String(price)),
-                changePercent24h: data.open_24h
-                  ? ((price - parseFloat(data.open_24h)) / parseFloat(data.open_24h)) * 100
-                  : 0,
-                high24h: parseFloat(data.high_24h || String(price)),
-                low24h: parseFloat(data.low_24h || String(price)),
-                volume24h: parseFloat(data.volume_24h || '0'),
-              };
-
-              if (candleRef.current) {
-                const candleInterval = granularity * 1000;
-                const currentCandleStart = Math.floor(tradeTime / candleInterval) * candleInterval;
-
-                if (candleRef.current.time === currentCandleStart) {
-                  candleRef.current = {
-                    time: currentCandleStart,
-                    open: candleRef.current.open,
-                    high: Math.max(candleRef.current.high, price),
-                    low: Math.min(candleRef.current.low, price),
-                    close: price,
-                    volume: candleRef.current.volume,
-                  };
-                } else if (currentCandleStart > candleRef.current.time) {
-                  candleRef.current = {
-                    time: currentCandleStart,
-                    open: price,
-                    high: price,
-                    low: price,
-                    close: price,
-                    volume: 0,
-                  };
-                }
-              }
-
-              const now = Date.now();
-              if (now - lastCandleSyncRef.current > 500 && candleRef.current) {
-                lastCandleSyncRef.current = now;
-                const currentSlot = useChartStore.getState().slots[slotId];
-                const candles = [...currentSlot.candles];
-                if (candles.length > 0 && candles[candles.length - 1].time === candleRef.current.time) {
-                  candles[candles.length - 1] = candleRef.current;
-                } else {
-                  candles.push(candleRef.current);
-                }
-                saveSlotData(slotId, { currentPrice: price, ticker, candles });
-              } else {
-                saveSlotData(slotId, { currentPrice: price, ticker });
-              }
-            }
-          } catch { /* ignore parse errors */ }
-        };
-
-        ws.onerror = () => saveSlotData(slotId, { connectionStatus: 'error' });
-        ws.onclose = () => saveSlotData(slotId, { connectionStatus: 'disconnected' });
-
-        wsRef.current = ws;
-      } else {
-        // Web: REST polling for live price updates
         const pollPrice = async () => {
           try {
             const statsUrl = `https://api.exchange.coinbase.com/products/${productId}/stats`;
@@ -239,54 +189,107 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
               volume24h: parseFloat(stats.volume) || 0,
             };
 
-            if (candleRef.current) {
-              const tradeTime = Date.now();
-              const candleInterval = granularity * 1000;
-              const currentCandleStart = Math.floor(tradeTime / candleInterval) * candleInterval;
-
-              if (candleRef.current.time === currentCandleStart) {
-                candleRef.current = {
-                  time: currentCandleStart,
-                  open: candleRef.current.open,
-                  high: Math.max(candleRef.current.high, price),
-                  low: Math.min(candleRef.current.low, price),
-                  close: price,
-                  volume: candleRef.current.volume,
-                };
-              } else if (currentCandleStart > candleRef.current.time) {
-                candleRef.current = {
-                  time: currentCandleStart,
-                  open: price,
-                  high: price,
-                  low: price,
-                  close: price,
-                  volume: 0,
-                };
-              }
-            }
+            updateSlotCandle(price, Date.now());
 
             const currentSlot = useChartStore.getState().slots[slotId];
-            const candles = [...currentSlot.candles];
-            if (candles.length > 0 && candleRef.current) {
-              if (candles[candles.length - 1].time === candleRef.current.time) {
-                candles[candles.length - 1] = candleRef.current;
+            const slotCandles = [...currentSlot.candles];
+            if (slotCandles.length > 0 && candleRef.current) {
+              if (slotCandles[slotCandles.length - 1].time === candleRef.current.time) {
+                slotCandles[slotCandles.length - 1] = candleRef.current;
               } else {
-                candles.push(candleRef.current);
+                slotCandles.push(candleRef.current);
               }
             }
 
             saveSlotData(slotId, {
               currentPrice: price,
               ticker,
-              candles: candles.length > 0 ? candles : undefined,
+              candles: slotCandles.length > 0 ? slotCandles : undefined,
               connectionStatus: 'connected',
             });
           } catch { /* ignore poll errors */ }
         };
 
         pollPrice();
-        pollRef.current = setInterval(pollPrice, 3000);
-      }
+        pollRef.current = setInterval(pollPrice, 2000);
+      };
+
+      // WebSocket first, fallback to polling if it fails
+      const ws = new WebSocket(COINBASE_WS);
+
+      wsTimeoutRef.current = setTimeout(() => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          console.log(`[Slot ${slotId}] WebSocket timeout`);
+          ws.close();
+          startPolling();
+        }
+      }, 5000);
+
+      ws.onopen = () => {
+        if (wsTimeoutRef.current) { clearTimeout(wsTimeoutRef.current); wsTimeoutRef.current = null; }
+        ws.send(JSON.stringify({
+          type: 'subscribe',
+          product_ids: [productId],
+          channels: ['ticker'],
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'subscriptions') {
+            saveSlotData(slotId, { connectionStatus: 'connected' });
+          }
+
+          if (data.type === 'ticker' && data.product_id === productId) {
+            const price = parseFloat(data.price);
+            const tradeTime = new Date(data.time).getTime();
+
+            const ticker = {
+              symbol,
+              price,
+              change24h: price - parseFloat(data.open_24h || String(price)),
+              changePercent24h: data.open_24h
+                ? ((price - parseFloat(data.open_24h)) / parseFloat(data.open_24h)) * 100
+                : 0,
+              high24h: parseFloat(data.high_24h || String(price)),
+              low24h: parseFloat(data.low_24h || String(price)),
+              volume24h: parseFloat(data.volume_24h || '0'),
+            };
+
+            updateSlotCandle(price, tradeTime);
+
+            const now = Date.now();
+            if (now - lastCandleSyncRef.current > 500 && candleRef.current) {
+              lastCandleSyncRef.current = now;
+              const currentSlot = useChartStore.getState().slots[slotId];
+              const slotCandles = [...currentSlot.candles];
+              if (slotCandles.length > 0 && slotCandles[slotCandles.length - 1].time === candleRef.current.time) {
+                slotCandles[slotCandles.length - 1] = candleRef.current;
+              } else {
+                slotCandles.push(candleRef.current);
+              }
+              saveSlotData(slotId, { currentPrice: price, ticker, candles: slotCandles });
+            } else {
+              saveSlotData(slotId, { currentPrice: price, ticker });
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      };
+
+      ws.onerror = () => {
+        if (wsTimeoutRef.current) { clearTimeout(wsTimeoutRef.current); wsTimeoutRef.current = null; }
+        startPolling();
+      };
+
+      ws.onclose = (event) => {
+        if (!cancelled && event.code !== 1000) {
+          startPolling();
+        }
+      };
+
+      wsRef.current = ws;
     }
 
     async function setupStock() {
