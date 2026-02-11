@@ -57,7 +57,8 @@ export interface UpdateCheckResult {
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 // Hosts that block CORS in browsers — route through Vercel proxy in web mode
-const CORS_BLOCKED_HOSTS = ['api.exchange.coinbase.com'];
+// Note: Coinbase REST has access-control-allow-origin: * so no proxy needed
+const CORS_BLOCKED_HOSTS: string[] = [];
 
 /**
  * Wrap a URL for fetch: in Tauri returns as-is, in web mode proxies CORS-blocked hosts.
