@@ -88,9 +88,15 @@ const CHAIN_TO_GECKO: Record<string, string> = {
 };
 
 async function tryFetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, { cache: 'no-store', ...options });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: controller.signal, ...options });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ─── Stock APIs (Yahoo Finance — needs proxy in web) ────────────────
@@ -124,7 +130,7 @@ export async function fetchStockQuote(symbol: string): Promise<StockQuote> {
 
 async function tryJupiter(address: string): Promise<DexPriceResult> {
   const data = await tryFetchJson<Record<string, { usdPrice?: number; priceChange24h?: number }>>(
-    `https://lite-api.jup.ag/price/v3?ids=${address}`,
+    `https://api.jup.ag/price/v3?ids=${address}`,
   );
   const token = data[address];
   if (!token?.usdPrice || token.usdPrice <= 0) throw new Error('Jupiter: no price');

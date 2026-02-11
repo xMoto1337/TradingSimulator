@@ -513,9 +513,9 @@ async fn fetch_dex_price(chain_id: String, address: String, pair_address: Option
         let pa = pair_address.clone();
         let ua = ua.to_string();
         async move {
-            // Jupiter Lite API v3 — free, no API key, 60 req/min
+            // Jupiter Price API v3 (api.jup.ag — replaces deprecated lite-api.jup.ag)
             // Response is top-level HashMap<mint, {usdPrice, priceChange24h, ...}>
-            let url = format!("https://lite-api.jup.ag/price/v3?ids={}", address);
+            let url = format!("https://api.jup.ag/price/v3?ids={}", address);
             let response = client.get(&url)
                 .header("User-Agent", &ua)
                 .header("Accept", "application/json")
