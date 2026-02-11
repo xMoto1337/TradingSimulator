@@ -7,28 +7,8 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const isTauri = !!(window as any).__TAURI__;
 
-// Proxy URL for CORS-blocked APIs. Set via env or defaults to relative /api.
+// Proxy URL for Yahoo Finance (CORS-blocked). Set via env or defaults to relative /api.
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || '/api';
-
-/**
- * Only proxy hosts that actually block CORS in the browser.
- * DexScreener, GeckoTerminal, Jupiter, Raydium all support CORS — fetch direct.
- * In Tauri mode, returns the URL unchanged (webview doesn't enforce CORS).
- */
-const PROXY_HOSTS = new Set([
-  'api.exchange.coinbase.com',
-]);
-
-export function apiUrl(url: string): string {
-  if (isTauri) return url;
-  try {
-    const host = new URL(url).hostname;
-    if (PROXY_HOSTS.has(host)) {
-      return `${PROXY_BASE}/proxy?url=${encodeURIComponent(url)}`;
-    }
-  } catch { /* invalid URL, return as-is */ }
-  return url;
-}
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -76,6 +56,23 @@ export interface UpdateCheckResult {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
+// Hosts that block CORS in browsers — route through Vercel proxy in web mode
+const CORS_BLOCKED_HOSTS = ['api.exchange.coinbase.com'];
+
+/**
+ * Wrap a URL for fetch: in Tauri returns as-is, in web mode proxies CORS-blocked hosts.
+ */
+export function apiUrl(url: string): string {
+  if (isTauri) return url;
+  try {
+    const parsed = new URL(url);
+    if (CORS_BLOCKED_HOSTS.includes(parsed.host)) {
+      return `${PROXY_BASE}/proxy?url=${encodeURIComponent(url)}`;
+    }
+  } catch { /* invalid URL, return as-is */ }
+  return url;
+}
+
 const CHAIN_TO_GECKO: Record<string, string> = {
   solana: 'solana',
   ethereum: 'eth',
@@ -88,15 +85,9 @@ const CHAIN_TO_GECKO: Record<string, string> = {
 };
 
 async function tryFetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4000);
-  try {
-    const res = await fetch(url, { cache: 'no-store', signal: controller.signal, ...options });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
-  } finally {
-    clearTimeout(timeout);
-  }
+  const res = await fetch(url, { cache: 'no-store', ...options });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
 // ─── Stock APIs (Yahoo Finance — needs proxy in web) ────────────────
@@ -130,7 +121,7 @@ export async function fetchStockQuote(symbol: string): Promise<StockQuote> {
 
 async function tryJupiter(address: string): Promise<DexPriceResult> {
   const data = await tryFetchJson<Record<string, { usdPrice?: number; priceChange24h?: number }>>(
-    `https://api.jup.ag/price/v3?ids=${address}`,
+    `https://lite-api.jup.ag/price/v3?ids=${address}`,
   );
   const token = data[address];
   if (!token?.usdPrice || token.usdPrice <= 0) throw new Error('Jupiter: no price');
@@ -247,19 +238,7 @@ export async function fetchDexPrice(
     });
   }
 
-  // Web: try preferred (cached) source FIRST for fastest response
-  if (preferredSource) {
-    try {
-      switch (preferredSource) {
-        case 'jupiter': return await tryJupiter(address);
-        case 'raydium': return await tryRaydium(address);
-        case 'gecko': return await tryGecko(chainId, address);
-        case 'dexscreener': return await tryDexScreener(chainId, address, pairAddress);
-      }
-    } catch { /* preferred source failed, fall through to full chain */ }
-  }
-
-  // Full fallback chain
+  // Web: replicate the Rust fallback chain
   const isSolana = chainId.toLowerCase() === 'solana';
 
   if (isSolana) {
@@ -267,6 +246,14 @@ export async function fetchDexPrice(
     try { return await tryRaydium(address); } catch { /* next */ }
   }
 
+  // Preferred source shortcut
+  if (preferredSource === 'gecko') {
+    try { return await tryGecko(chainId, address); } catch { /* next */ }
+  } else if (preferredSource === 'dexscreener') {
+    try { return await tryDexScreener(chainId, address, pairAddress); } catch { /* next */ }
+  }
+
+  // Remaining sources
   try { return await tryGecko(chainId, address); } catch { /* next */ }
   return tryDexScreener(chainId, address, pairAddress);
 }

@@ -4,11 +4,10 @@ import { useChartStore } from '../stores/chartStore';
 import { useTradingStore } from '../stores/tradingStore';
 import type { Candle, Timeframe } from '../types/trading';
 
-const BINANCE_WS = 'wss://stream.binance.com:9443';
-const BINANCE_REST = 'https://api.binance.com/api/v3';
-const BINANCE_INTERVAL: Record<string, string> = {
-  '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
-  '1h': '1h', '4h': '4h', '1d': '1d', '1w': '1w', '1M': '1M',
+const COINBASE_WS = 'wss://ws-feed.exchange.coinbase.com';
+
+const GRANULARITY: Record<string, number> = {
+  '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 21600, '1d': 86400,
 };
 
 const YAHOO_PARAMS: Record<string, { interval: string; range: string }> = {
@@ -41,7 +40,6 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
   const candleRef = useRef<Candle | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const wsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCandleSyncRef = useRef(0);
   const saveSlotData = useChartStore((s) => s.saveSlotData);
 
@@ -70,10 +68,6 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
     };
 
     function doCleanup() {
-      if (wsTimeoutRef.current) {
-        clearTimeout(wsTimeoutRef.current);
-        wsTimeoutRef.current = null;
-      }
       if (wsRef.current) {
         wsRef.current.close(1000);
         wsRef.current = null;
@@ -89,44 +83,49 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
     }
 
     async function setupCrypto() {
-      const binanceSymbol = symbol.toLowerCase();
-      const interval = BINANCE_INTERVAL[timeframe] || '1h';
+      const productId = symbol.replace('USDT', '-USD');
+      const granularity = GRANULARITY[timeframe] || 3600;
 
       saveSlotData(slotId, { connectionStatus: 'connecting' });
 
-      // 1. Fetch historical candles from Binance REST (CORS OK)
+      // Fetch historical candles
       try {
-        const url = `${BINANCE_REST}/klines?symbol=${symbol}&interval=${interval}&limit=300`;
-        const res = await fetch(url);
+        const now = Math.floor(Date.now() / 1000);
+        const start = now - granularity * 300;
+        const url = `https://api.exchange.coinbase.com/products/${productId}/candles?granularity=${granularity}&start=${start}&end=${now}`;
+        const response = await fetch(apiUrl(url));
         if (cancelled) return;
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
 
-        const candles: Candle[] = data.map((k: (string | number)[]) => ({
-          time: Number(k[0]),
-          open: parseFloat(k[1] as string),
-          high: parseFloat(k[2] as string),
-          low: parseFloat(k[3] as string),
-          close: parseFloat(k[4] as string),
-          volume: parseFloat(k[5] as string),
-        }));
+        if (response.ok) {
+          const data = await response.json();
+          const candles: Candle[] = data
+            .map((c: number[]) => ({
+              time: c[0] * 1000,
+              open: c[3],
+              high: c[2],
+              low: c[1],
+              close: c[4],
+              volume: c[5],
+            }))
+            .sort((a: Candle, b: Candle) => a.time - b.time);
 
-        if (candles.length > 0 && !cancelled) {
-          const last = candles[candles.length - 1];
-          candleRef.current = { ...last };
-          saveSlotData(slotId, {
-            candles,
-            currentPrice: last.close,
-            ticker: {
-              symbol,
-              price: last.close,
-              change24h: 0,
-              changePercent24h: 0,
-              high24h: last.high,
-              low24h: last.low,
-              volume24h: last.volume || 0,
-            },
-          });
+          if (candles.length > 0 && !cancelled) {
+            const last = candles[candles.length - 1];
+            candleRef.current = { ...last };
+            saveSlotData(slotId, {
+              candles,
+              currentPrice: last.close,
+              ticker: {
+                symbol,
+                price: last.close,
+                change24h: 0,
+                changePercent24h: 0,
+                high24h: last.high,
+                low24h: last.low,
+                volume24h: last.volume || 0,
+              },
+            });
+          }
         }
       } catch (e) {
         console.log(`[Slot ${slotId}] Candle fetch error:`, e);
@@ -134,83 +133,88 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
 
       if (cancelled) return;
 
-      // 2. Connect Binance WebSocket (combined ticker + kline stream)
-      const streams = `${binanceSymbol}@kline_${interval}/${binanceSymbol}@ticker`;
-      const ws = new WebSocket(`${BINANCE_WS}/stream?streams=${streams}`);
-
-      wsTimeoutRef.current = setTimeout(() => {
-        if (ws.readyState !== WebSocket.OPEN) {
-          console.log(`[Slot ${slotId}] WebSocket timeout`);
-          ws.close();
-          saveSlotData(slotId, { connectionStatus: 'error' });
-        }
-      }, 5000);
+      // Connect WebSocket for live updates
+      const ws = new WebSocket(COINBASE_WS);
 
       ws.onopen = () => {
-        if (wsTimeoutRef.current) { clearTimeout(wsTimeoutRef.current); wsTimeoutRef.current = null; }
-        saveSlotData(slotId, { connectionStatus: 'connected' });
+        ws.send(JSON.stringify({
+          type: 'subscribe',
+          product_ids: [productId],
+          channels: ['ticker'],
+        }));
       };
 
       ws.onmessage = (event) => {
         try {
-          const msg = JSON.parse(event.data);
-          const d = msg.data;
-          if (!d) return;
+          const data = JSON.parse(event.data);
 
-          if (d.e === '24hrTicker') {
-            const price = parseFloat(d.c);
-            saveSlotData(slotId, {
-              currentPrice: price,
-              ticker: {
-                symbol,
-                price,
-                change24h: parseFloat(d.p || '0'),
-                changePercent24h: parseFloat(d.P || '0'),
-                high24h: parseFloat(d.h || String(price)),
-                low24h: parseFloat(d.l || String(price)),
-                volume24h: parseFloat(d.v || '0'),
-              },
-            });
+          if (data.type === 'subscriptions') {
+            saveSlotData(slotId, { connectionStatus: 'connected' });
           }
 
-          if (d.e === 'kline' && d.k) {
-            const k = d.k;
-            const candle: Candle = {
-              time: k.t,
-              open: parseFloat(k.o),
-              high: parseFloat(k.h),
-              low: parseFloat(k.l),
-              close: parseFloat(k.c),
-              volume: parseFloat(k.v),
-            };
-            candleRef.current = candle;
+          if (data.type === 'ticker' && data.product_id === productId) {
+            const price = parseFloat(data.price);
+            const tradeTime = new Date(data.time).getTime();
 
+            const ticker = {
+              symbol,
+              price,
+              change24h: price - parseFloat(data.open_24h || String(price)),
+              changePercent24h: data.open_24h
+                ? ((price - parseFloat(data.open_24h)) / parseFloat(data.open_24h)) * 100
+                : 0,
+              high24h: parseFloat(data.high_24h || String(price)),
+              low24h: parseFloat(data.low_24h || String(price)),
+              volume24h: parseFloat(data.volume_24h || '0'),
+            };
+
+            // Update candle in ref
+            if (candleRef.current) {
+              const candleInterval = granularity * 1000;
+              const currentCandleStart = Math.floor(tradeTime / candleInterval) * candleInterval;
+
+              if (candleRef.current.time === currentCandleStart) {
+                candleRef.current = {
+                  time: currentCandleStart,
+                  open: candleRef.current.open,
+                  high: Math.max(candleRef.current.high, price),
+                  low: Math.min(candleRef.current.low, price),
+                  close: price,
+                  volume: candleRef.current.volume,
+                };
+              } else if (currentCandleStart > candleRef.current.time) {
+                candleRef.current = {
+                  time: currentCandleStart,
+                  open: price,
+                  high: price,
+                  low: price,
+                  close: price,
+                  volume: 0,
+                };
+              }
+            }
+
+            // Throttle candle array updates to ~2/sec, but always update price/ticker
             const now = Date.now();
-            if (now - lastCandleSyncRef.current > 500) {
+            if (now - lastCandleSyncRef.current > 500 && candleRef.current) {
               lastCandleSyncRef.current = now;
               const currentSlot = useChartStore.getState().slots[slotId];
-              const slotCandles = [...currentSlot.candles];
-              if (slotCandles.length > 0 && slotCandles[slotCandles.length - 1].time === candle.time) {
-                slotCandles[slotCandles.length - 1] = candle;
+              const candles = [...currentSlot.candles];
+              if (candles.length > 0 && candles[candles.length - 1].time === candleRef.current.time) {
+                candles[candles.length - 1] = candleRef.current;
               } else {
-                slotCandles.push(candle);
+                candles.push(candleRef.current);
               }
-              saveSlotData(slotId, { candles: slotCandles });
+              saveSlotData(slotId, { currentPrice: price, ticker, candles });
+            } else {
+              saveSlotData(slotId, { currentPrice: price, ticker });
             }
           }
         } catch { /* ignore parse errors */ }
       };
 
-      ws.onerror = () => {
-        if (wsTimeoutRef.current) { clearTimeout(wsTimeoutRef.current); wsTimeoutRef.current = null; }
-        saveSlotData(slotId, { connectionStatus: 'error' });
-      };
-
-      ws.onclose = (event) => {
-        if (!cancelled && event.code !== 1000) {
-          saveSlotData(slotId, { connectionStatus: 'disconnected' });
-        }
-      };
+      ws.onerror = () => saveSlotData(slotId, { connectionStatus: 'error' });
+      ws.onclose = () => saveSlotData(slotId, { connectionStatus: 'disconnected' });
 
       wsRef.current = ws;
     }
@@ -302,7 +306,7 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
       if (network) {
         try {
           if (!poolAddress) {
-            const dexResp = await fetch(apiUrl(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`), { cache: 'no-store' });
+            const dexResp = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`, { cache: 'no-store' });
             const dexData = await dexResp.json();
             if (dexData.pairs?.length > 0) {
               const pair = dexData.pairs.find((p: { chainId: string }) =>
@@ -314,8 +318,8 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
           if (poolAddress && !cancelled) {
             const tfConfig = GECKO_TF[timeframe] || { tf: 'hour', aggregate: 1 };
             const resp = await fetch(
-              apiUrl(`https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}/ohlcv/${tfConfig.tf}?aggregate=${tfConfig.aggregate}&limit=300`),
-              { cache: 'no-store' }
+              `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}/ohlcv/${tfConfig.tf}?aggregate=${tfConfig.aggregate}&limit=300`,
+              { headers: { 'Accept': 'application/json' }, cache: 'no-store' }
             );
             if (resp.ok && !cancelled) {
               const data = await resp.json();
