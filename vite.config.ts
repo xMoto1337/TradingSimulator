@@ -12,6 +12,27 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
+      // Web-only: inject fetch proxy to route CORS-blocked hosts through Vercel
+      ...(isWebBuild ? [{
+        name: 'web-fetch-proxy',
+        transformIndexHtml(html: string) {
+          const script = `<script>
+(function(){
+  if(window.__TAURI__)return;
+  var real=window.fetch;
+  var hosts=['api.exchange.coinbase.com'];
+  window.fetch=function(input,init){
+    var url=typeof input==='string'?input:input instanceof Request?input.url:String(input);
+    try{var h=new URL(url,location.origin).host;
+      if(hosts.indexOf(h)!==-1)return real('/api/proxy?url='+encodeURIComponent(url),init);
+    }catch(e){}
+    return real(input,init);
+  };
+})();
+</script>`;
+          return html.replace('</head>', script + '</head>');
+        },
+      }] : []),
       // Copy CHANGELOG.md to output for web builds (so /CHANGELOG.md works)
       {
         name: 'copy-changelog',

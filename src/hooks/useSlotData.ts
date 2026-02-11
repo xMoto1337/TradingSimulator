@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { fetchStockCandles, fetchStockQuote, fetchDexPrice, fetchDexStats, apiUrl } from '../api';
+import { fetchStockCandles, fetchStockQuote, fetchDexPrice, fetchDexStats } from '../api';
 import { useChartStore } from '../stores/chartStore';
 import { useTradingStore } from '../stores/tradingStore';
 import type { Candle, Timeframe } from '../types/trading';
@@ -93,7 +93,7 @@ export function useSlotData(slotId: string, symbol: string, timeframe: Timeframe
         const now = Math.floor(Date.now() / 1000);
         const start = now - granularity * 300;
         const url = `https://api.exchange.coinbase.com/products/${productId}/candles?granularity=${granularity}&start=${start}&end=${now}`;
-        const response = await fetch(apiUrl(url));
+        const response = await fetch(url);
         if (cancelled) return;
 
         if (response.ok) {

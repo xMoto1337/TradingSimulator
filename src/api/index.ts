@@ -85,9 +85,15 @@ const CHAIN_TO_GECKO: Record<string, string> = {
 };
 
 async function tryFetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, { cache: 'no-store', ...options });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: controller.signal, ...options });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ─── Stock APIs (Yahoo Finance — needs proxy in web) ────────────────
@@ -240,20 +246,24 @@ export async function fetchDexPrice(
 
   // Web: replicate the Rust fallback chain
   const isSolana = chainId.toLowerCase() === 'solana';
+  const pref = preferredSource || '';
 
+  // Try cached preferred source first (single fast request)
+  if (pref === 'jupiter') {
+    try { return await tryJupiter(address); } catch { /* next */ }
+  } else if (pref === 'raydium') {
+    try { return await tryRaydium(address); } catch { /* next */ }
+  } else if (pref === 'gecko') {
+    try { return await tryGecko(chainId, address); } catch { /* next */ }
+  } else if (pref === 'dexscreener') {
+    try { return await tryDexScreener(chainId, address, pairAddress); } catch { /* next */ }
+  }
+
+  // Full fallback chain
   if (isSolana) {
     try { return await tryJupiter(address); } catch { /* next */ }
     try { return await tryRaydium(address); } catch { /* next */ }
   }
-
-  // Preferred source shortcut
-  if (preferredSource === 'gecko') {
-    try { return await tryGecko(chainId, address); } catch { /* next */ }
-  } else if (preferredSource === 'dexscreener') {
-    try { return await tryDexScreener(chainId, address, pairAddress); } catch { /* next */ }
-  }
-
-  // Remaining sources
   try { return await tryGecko(chainId, address); } catch { /* next */ }
   return tryDexScreener(chainId, address, pairAddress);
 }
