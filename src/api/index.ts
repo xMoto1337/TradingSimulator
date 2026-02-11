@@ -11,13 +11,23 @@ const isTauri = !!(window as any).__TAURI__;
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || '/api';
 
 /**
- * In web mode, routes fetch requests through our CORS proxy for APIs that
- * don't send browser CORS headers (Coinbase Exchange, etc.).
+ * Only proxy hosts that actually block CORS in the browser.
+ * DexScreener, GeckoTerminal, Jupiter, Raydium all support CORS — fetch direct.
  * In Tauri mode, returns the URL unchanged (webview doesn't enforce CORS).
  */
+const PROXY_HOSTS = new Set([
+  'api.exchange.coinbase.com',
+]);
+
 export function apiUrl(url: string): string {
   if (isTauri) return url;
-  return `${PROXY_BASE}/proxy?url=${encodeURIComponent(url)}`;
+  try {
+    const host = new URL(url).hostname;
+    if (PROXY_HOSTS.has(host)) {
+      return `${PROXY_BASE}/proxy?url=${encodeURIComponent(url)}`;
+    }
+  } catch { /* invalid URL, return as-is */ }
+  return url;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -231,7 +241,19 @@ export async function fetchDexPrice(
     });
   }
 
-  // Web: replicate the Rust fallback chain
+  // Web: try preferred (cached) source FIRST for fastest response
+  if (preferredSource) {
+    try {
+      switch (preferredSource) {
+        case 'jupiter': return await tryJupiter(address);
+        case 'raydium': return await tryRaydium(address);
+        case 'gecko': return await tryGecko(chainId, address);
+        case 'dexscreener': return await tryDexScreener(chainId, address, pairAddress);
+      }
+    } catch { /* preferred source failed, fall through to full chain */ }
+  }
+
+  // Full fallback chain
   const isSolana = chainId.toLowerCase() === 'solana';
 
   if (isSolana) {
@@ -239,14 +261,6 @@ export async function fetchDexPrice(
     try { return await tryRaydium(address); } catch { /* next */ }
   }
 
-  // Preferred source shortcut
-  if (preferredSource === 'gecko') {
-    try { return await tryGecko(chainId, address); } catch { /* next */ }
-  } else if (preferredSource === 'dexscreener') {
-    try { return await tryDexScreener(chainId, address, pairAddress); } catch { /* next */ }
-  }
-
-  // Remaining sources
   try { return await tryGecko(chainId, address); } catch { /* next */ }
   return tryDexScreener(chainId, address, pairAddress);
 }
