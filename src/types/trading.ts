@@ -92,6 +92,9 @@ export interface TradeRecord {
   timestamp: number;
 }
 
+// Chart display type
+export type ChartType = 'candlestick' | 'line' | 'area';
+
 // Timeframe (1s not supported by Binance.US)
 export type Timeframe = '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d' | '1w' | '1M';
 

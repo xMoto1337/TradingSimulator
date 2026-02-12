@@ -599,6 +599,37 @@ body {
   border-color: rgba(255, 0, 64, 0.4);
 }
 
+.chart-type-group {
+  display: flex;
+  gap: 2px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border-color);
+  margin-right: 4px;
+}
+
+.chart-type-btn.active {
+  background: rgba(0, 255, 255, 0.12);
+  color: #00ffff;
+  border-color: rgba(0, 255, 255, 0.35);
+}
+
+/* ===== LIVE Badge ===== */
+.live-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #00ff41;
+  padding: 1px 5px;
+  border: 1px solid rgba(0, 255, 65, 0.4);
+  border-radius: 3px;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 /* ===== Indicator Menu ===== */
 .indicator-menu {
   position: relative;

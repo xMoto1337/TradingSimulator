@@ -103,10 +103,12 @@ export function ChartControls({ frozenData, layout, onLayoutChange, onPopout }: 
   };
 
   const formatPrice = (price: number) => {
-    if (price >= 1000) return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    if (price >= 1) return price.toFixed(4);
-    if (price >= 0.0001) return price.toFixed(6);
-    return price.toFixed(10);
+    if (price >= 10000) return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (price >= 100) return price.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+    if (price >= 1) return price.toFixed(6);
+    if (price >= 0.01) return price.toFixed(8);
+    if (price >= 0.0001) return price.toFixed(10);
+    return price.toFixed(12);
   };
 
   const formatChange = (change: number) => {
@@ -186,8 +188,10 @@ export function ChartControls({ frozenData, layout, onLayoutChange, onPopout }: 
             </button>
           )}
           <div className="connection-status">
+            {connectionStatus === 'connected' && (
+              <span className="live-badge">LIVE</span>
+            )}
             <span className={`status-dot ${connectionStatus}`}></span>
-            <span className="status-text">{connectionStatus}</span>
           </div>
         </div>
       </div>

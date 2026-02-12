@@ -8,10 +8,12 @@ import {
   Time,
   ColorType,
   LineStyle,
+  LineType,
   IPriceLine,
 } from 'lightweight-charts';
 import { useTradingStore } from '../../stores/tradingStore';
-import type { Candle, Timeframe } from '../../types/trading';
+import { useSettingsStore } from '../../stores/settingsStore';
+import type { Candle, Timeframe, ChartType } from '../../types/trading';
 import { ChartTools, DrawingTool } from './ChartTools';
 import {
   calculateSMA,
@@ -36,6 +38,11 @@ const toVolumeData = (candle: Candle): HistogramData<Time> => ({
   color: candle.close >= candle.open ? 'rgba(0, 255, 65, 0.5)' : 'rgba(255, 0, 64, 0.5)',
 });
 
+const toLineData = (candle: Candle) => ({
+  time: (candle.time / 1000) as Time,
+  value: candle.close,
+});
+
 // 12-hour AM/PM time formatting
 function formatTime12h(date: Date): string {
   let hours = date.getHours();
@@ -49,11 +56,12 @@ const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 
 // Calculate appropriate precision based on price magnitude
 function getPricePrecision(price: number): number {
-  if (price >= 1000) return 2;
-  if (price >= 1) return 4;
-  if (price >= 0.01) return 6;
-  if (price >= 0.0001) return 8;
-  return 10; // For very small prices like memecoins
+  if (price >= 10000) return 2;
+  if (price >= 100) return 4;
+  if (price >= 1) return 6;
+  if (price >= 0.01) return 8;
+  if (price >= 0.0001) return 10;
+  return 12; // For very small prices like memecoins
 }
 
 interface Drawing {
@@ -78,13 +86,17 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
   const isFrozen = !!frozenData;
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const mainSeriesRef = useRef<ISeriesApi<'Candlestick'> | ISeriesApi<'Line'> | ISeriesApi<'Area'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const chartTypeRef = useRef<ChartType>('candlestick');
 
   const storeCandles = useTradingStore((state) => state.candles);
   const storeCurrentPrice = useTradingStore((state) => state.currentPrice);
   const storeTimeframe = useTradingStore((state) => state.currentTimeframe);
   const storeSymbol = useTradingStore((state) => state.currentSymbol);
+
+  const chartType = useSettingsStore((state) => state.chartType);
+  const setChartType = useSettingsStore((state) => state.setChartType);
 
   const candles = frozenData?.candles ?? storeCandles;
   const currentPrice = frozenData?.currentPrice ?? storeCurrentPrice;
@@ -199,22 +211,7 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
       },
     });
 
-    // Candlestick series
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: '#00ff41',
-      downColor: '#ff0040',
-      borderUpColor: '#00ff41',
-      borderDownColor: '#ff0040',
-      wickUpColor: '#00ff41',
-      wickDownColor: '#ff0040',
-      priceLineVisible: true,
-      priceLineWidth: 1,
-      priceLineColor: '#00ff41',
-      priceLineStyle: 2,
-      lastValueVisible: true,
-    });
-
-    // Volume series
+    // Volume series (always present regardless of chart type)
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
@@ -226,7 +223,6 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
     });
 
     chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
 
     // Handle resize
@@ -251,9 +247,173 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
     };
   }, []);
 
+  // Create/recreate main series when chart type changes
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const chart = chartRef.current;
+
+    // Remove old main series if exists
+    if (mainSeriesRef.current) {
+      // Clear drawings since they reference the old series
+      drawings.forEach(drawing => {
+        if (drawing.series) { try { chart.removeSeries(drawing.series); } catch {} }
+        if (drawing.priceLine && mainSeriesRef.current) {
+          try { (mainSeriesRef.current as any).removePriceLine(drawing.priceLine); } catch {}
+        }
+        if (drawing.priceLines && mainSeriesRef.current) {
+          drawing.priceLines.forEach(pl => { try { (mainSeriesRef.current as any).removePriceLine(pl); } catch {} });
+        }
+      });
+      setDrawings([]);
+      setPendingPoints([]);
+      if (previewSeriesRef.current) {
+        try { chart.removeSeries(previewSeriesRef.current); } catch {}
+        previewSeriesRef.current = null;
+      }
+
+      try { chart.removeSeries(mainSeriesRef.current as any); } catch {}
+      mainSeriesRef.current = null;
+    }
+
+    chartTypeRef.current = chartType;
+    const firstPrice = candles.length > 0 ? candles[0].close : 1;
+    const precision = getPricePrecision(firstPrice);
+    const priceFormat = { type: 'price' as const, precision, minMove: Math.pow(10, -precision) };
+
+    if (chartType === 'line') {
+      mainSeriesRef.current = chart.addLineSeries({
+        color: '#00ffff',
+        lineWidth: 2,
+        lineType: LineType.Curved,
+        crosshairMarkerVisible: true,
+        lastValueVisible: true,
+        priceLineVisible: true,
+        priceLineColor: '#00ffff',
+        priceLineStyle: 2,
+        priceFormat,
+      });
+    } else if (chartType === 'area') {
+      mainSeriesRef.current = chart.addAreaSeries({
+        lineColor: '#00ffff',
+        topColor: 'rgba(0, 255, 255, 0.28)',
+        bottomColor: 'rgba(0, 255, 255, 0.02)',
+        lineWidth: 2,
+        lineType: LineType.Curved,
+        crosshairMarkerVisible: true,
+        lastValueVisible: true,
+        priceLineVisible: true,
+        priceLineColor: '#00ffff',
+        priceLineStyle: 2,
+        priceFormat,
+      });
+    } else {
+      mainSeriesRef.current = chart.addCandlestickSeries({
+        upColor: '#00ff41',
+        downColor: '#ff0040',
+        borderUpColor: '#00ff41',
+        borderDownColor: '#ff0040',
+        wickUpColor: '#00ff41',
+        wickDownColor: '#ff0040',
+        priceLineVisible: true,
+        priceLineWidth: 1,
+        priceLineColor: '#00ff41',
+        priceLineStyle: 2,
+        lastValueVisible: true,
+        priceFormat,
+      });
+    }
+
+    // Set data on the new series
+    if (candles.length > 0 && mainSeriesRef.current) {
+      if (chartType === 'candlestick') {
+        (mainSeriesRef.current as ISeriesApi<'Candlestick'>).setData(candles.map(toChartCandle));
+      } else {
+        (mainSeriesRef.current as any).setData(candles.map(toLineData));
+      }
+      volumeSeriesRef.current?.setData(candles.map(toVolumeData));
+    }
+
+    // Fit content after type switch
+    if (candles.length > 0) {
+      chart.timeScale().fitContent();
+    }
+  }, [chartType]);
+
+  // Scroll-back pagination: load older candles when user scrolls to the left edge
+  useEffect(() => {
+    if (!chartRef.current || isFrozen) return;
+
+    const isDex = currentSymbol.toLowerCase().startsWith('dex:');
+    if (isDex) return; // Only Coinbase crypto for now
+
+    const productId = currentSymbol.endsWith('USDT')
+      ? currentSymbol.replace('USDT', '-USD')
+      : null;
+    if (!productId) return;
+
+    const granularityMap: Record<string, number> = {
+      '1m': 60, '3m': 60, '5m': 300, '15m': 900, '30m': 900,
+      '1h': 3600, '4h': 21600, '1d': 86400, '1w': 86400, '1M': 86400,
+    };
+    const granularity = granularityMap[currentTimeframe] || 3600;
+
+    let lastFetch = 0;
+    let isFetching = false;
+    const MAX_CANDLES = 2000;
+
+    const handleRangeChange = () => {
+      if (isFetching) return;
+
+      const currentCandles = useTradingStore.getState().candles;
+      if (currentCandles.length === 0 || currentCandles.length >= MAX_CANDLES) return;
+
+      // Check if the first candle is visible
+      const chart = chartRef.current;
+      if (!chart) return;
+      const visibleRange = chart.timeScale().getVisibleRange();
+      if (!visibleRange) return;
+
+      const firstCandleTime = currentCandles[0].time / 1000;
+      if ((visibleRange.from as number) > firstCandleTime) return;
+
+      // Throttle: 2s cooldown
+      const now = Date.now();
+      if (now - lastFetch < 2000) return;
+      lastFetch = now;
+      isFetching = true;
+
+      const end = Math.floor(currentCandles[0].time / 1000);
+      const start = end - (granularity * 300);
+
+      fetch(`https://api.exchange.coinbase.com/products/${productId}/candles?granularity=${granularity}&start=${start}&end=${end}`)
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then((data: number[][]) => {
+          const existing = useTradingStore.getState().candles;
+          const olderCandles: Candle[] = data
+            .map(c => ({ time: c[0] * 1000, open: c[3], high: c[2], low: c[1], close: c[4], volume: c[5] }))
+            .sort((a, b) => a.time - b.time)
+            .filter(c => c.time < existing[0].time);
+
+          if (olderCandles.length > 0) {
+            const merged = [...olderCandles, ...existing].slice(-MAX_CANDLES);
+            useTradingStore.getState().setCandles(merged);
+            console.log(`[Chart] Loaded ${olderCandles.length} older candles (total: ${merged.length})`);
+          }
+        })
+        .catch(e => console.error('[Chart] Scroll-back fetch error:', e))
+        .finally(() => { isFetching = false; });
+    };
+
+    chartRef.current.timeScale().subscribeVisibleTimeRangeChange(handleRangeChange);
+
+    return () => {
+      chartRef.current?.timeScale().unsubscribeVisibleTimeRangeChange(handleRangeChange);
+    };
+  }, [currentSymbol, currentTimeframe, isFrozen]);
+
   // Handle drawing clicks
   const handleChartClick = useCallback((e: MouseEvent) => {
-    if (!chartRef.current || !candleSeriesRef.current || activeTool === 'none' || activeTool === 'crosshair') return;
+    if (!chartRef.current || !mainSeriesRef.current || activeTool === 'none' || activeTool === 'crosshair') return;
 
     const rect = chartContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -263,7 +423,7 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
 
     // Convert coordinates to price and time
     const timeCoord = chartRef.current.timeScale().coordinateToTime(x);
-    const priceCoord = candleSeriesRef.current.coordinateToPrice(y);
+    const priceCoord = mainSeriesRef.current.coordinateToPrice(y);
 
     if (timeCoord === null || priceCoord === null) return;
 
@@ -271,7 +431,7 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
 
     if (activeTool === 'hline') {
       // Horizontal line only needs one click
-      const priceLine = candleSeriesRef.current.createPriceLine({
+      const priceLine = mainSeriesRef.current.createPriceLine({
         price: priceCoord,
         color: '#ffcc00',
         lineWidth: 1,
@@ -317,7 +477,7 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
 
           fibLevels.forEach(level => {
             const price = startPrice + diff * level;
-            const priceLine = candleSeriesRef.current!.createPriceLine({
+            const priceLine = mainSeriesRef.current!.createPriceLine({
               price,
               color: level === 0.618 ? '#ff9800' : 'rgba(255, 152, 0, 0.5)',
               lineWidth: 1,
@@ -397,7 +557,7 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
         const maxPrice = Math.max(sortedPoints[0].price, sortedPoints[1].price);
 
         // Add lines for top and bottom
-        const topLine = candleSeriesRef.current!.createPriceLine({
+        const topLine = mainSeriesRef.current!.createPriceLine({
           price: maxPrice,
           color: 'rgba(255, 204, 0, 0.5)',
           lineWidth: 1,
@@ -405,7 +565,7 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
           axisLabelVisible: false,
         });
 
-        const bottomLine = candleSeriesRef.current!.createPriceLine({
+        const bottomLine = mainSeriesRef.current!.createPriceLine({
           price: minPrice,
           color: 'rgba(255, 204, 0, 0.5)',
           lineWidth: 1,
@@ -428,7 +588,7 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
 
   // Handle mouse move for preview
   const handleMouseMove = useCallback((e: MouseEvent) => {
-    if (!chartRef.current || !candleSeriesRef.current || pendingPoints.length === 0) return;
+    if (!chartRef.current || !mainSeriesRef.current || pendingPoints.length === 0) return;
     if (activeTool !== 'trendline' && activeTool !== 'ray') return;
 
     const rect = chartContainerRef.current?.getBoundingClientRect();
@@ -438,7 +598,7 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
     const y = e.clientY - rect.top;
 
     const timeCoord = chartRef.current.timeScale().coordinateToTime(x);
-    const priceCoord = candleSeriesRef.current.coordinateToPrice(y);
+    const priceCoord = mainSeriesRef.current.coordinateToPrice(y);
 
     if (timeCoord === null || priceCoord === null) return;
 
@@ -500,16 +660,16 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
           chartRef.current.removeSeries(drawing.series);
         } catch {}
       }
-      if (drawing.priceLine && candleSeriesRef.current) {
+      if (drawing.priceLine && mainSeriesRef.current) {
         try {
-          candleSeriesRef.current.removePriceLine(drawing.priceLine);
+          mainSeriesRef.current.removePriceLine(drawing.priceLine);
         } catch {}
       }
       // Handle Fib drawings with multiple price lines
-      if (drawing.priceLines && candleSeriesRef.current) {
+      if (drawing.priceLines && mainSeriesRef.current) {
         drawing.priceLines.forEach(pl => {
           try {
-            candleSeriesRef.current!.removePriceLine(pl);
+            mainSeriesRef.current!.removePriceLine(pl);
           } catch {}
         });
       }
@@ -543,16 +703,16 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
         chartRef.current.removeSeries(lastDrawing.series);
       } catch {}
     }
-    if (lastDrawing.priceLine && candleSeriesRef.current) {
+    if (lastDrawing.priceLine && mainSeriesRef.current) {
       try {
-        candleSeriesRef.current.removePriceLine(lastDrawing.priceLine);
+        mainSeriesRef.current.removePriceLine(lastDrawing.priceLine);
       } catch {}
     }
     // Handle Fib drawings with multiple price lines
-    if (lastDrawing.priceLines && candleSeriesRef.current) {
+    if (lastDrawing.priceLines && mainSeriesRef.current) {
       lastDrawing.priceLines.forEach(pl => {
         try {
-          candleSeriesRef.current!.removePriceLine(pl);
+          mainSeriesRef.current!.removePriceLine(pl);
         } catch {}
       });
     }
@@ -569,12 +729,12 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
 
   // Update chart data when candles change
   useEffect(() => {
-    if (!candleSeriesRef.current || !volumeSeriesRef.current || candles.length === 0) return;
+    if (!mainSeriesRef.current || !volumeSeriesRef.current || candles.length === 0) return;
 
     // Set price precision based on the price magnitude
     const firstPrice = candles[0]?.close || 1;
     const precision = getPricePrecision(firstPrice);
-    candleSeriesRef.current.applyOptions({
+    (mainSeriesRef.current as any).applyOptions({
       priceFormat: {
         type: 'price',
         precision: precision,
@@ -582,11 +742,12 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
       },
     });
 
-    const candleData = candles.map(toChartCandle);
-    const volumeData = candles.map(toVolumeData);
-
-    candleSeriesRef.current.setData(candleData);
-    volumeSeriesRef.current.setData(volumeData);
+    if (chartType === 'candlestick') {
+      (mainSeriesRef.current as ISeriesApi<'Candlestick'>).setData(candles.map(toChartCandle));
+    } else {
+      (mainSeriesRef.current as any).setData(candles.map(toLineData));
+    }
+    volumeSeriesRef.current.setData(candles.map(toVolumeData));
 
     // Only fitContent on initial load, timeframe change, or symbol change
     const timeframeChanged = prevTimeframeRef.current !== currentTimeframe;
@@ -597,11 +758,11 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
       prevTimeframeRef.current = currentTimeframe;
       prevSymbolRef.current = currentSymbol;
     }
-  }, [candles.length, currentTimeframe, currentSymbol]);
+  }, [candles.length, currentTimeframe, currentSymbol, chartType]);
 
   // Update last candle in real-time with current price (without re-fitting)
   useEffect(() => {
-    if (!candleSeriesRef.current || !volumeSeriesRef.current || candles.length === 0 || !currentPrice) return;
+    if (!mainSeriesRef.current || !volumeSeriesRef.current || candles.length === 0 || !currentPrice) return;
 
     const lastCandle = candles[candles.length - 1];
 
@@ -613,9 +774,13 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
       low: Math.min(lastCandle.low, currentPrice),
     };
 
-    candleSeriesRef.current.update(toChartCandle(updatedCandle));
+    if (chartType === 'candlestick') {
+      (mainSeriesRef.current as ISeriesApi<'Candlestick'>).update(toChartCandle(updatedCandle));
+    } else {
+      (mainSeriesRef.current as any).update(toLineData(updatedCandle));
+    }
     volumeSeriesRef.current.update(toVolumeData(updatedCandle));
-  }, [candles, currentPrice]);
+  }, [candles, currentPrice, chartType]);
 
   // Update cursor based on tool
   useEffect(() => {
@@ -766,6 +931,8 @@ export function CandlestickChart({ frozenData }: CandlestickChartProps) {
           onUndo={handleUndo}
           activeIndicators={activeIndicators}
           onToggleIndicator={handleToggleIndicator}
+          chartType={chartType}
+          onChartTypeChange={setChartType}
         />
       )}
       <div
