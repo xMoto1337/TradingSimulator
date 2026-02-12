@@ -21,19 +21,25 @@ export default defineConfig(({ mode }) => {
   if(window.__TAURI__)return;
   var L='[Web] ';
 
-  // --- Fetch proxy: route Coinbase API through Vercel proxy ---
-  // Avoids ad-blockers/content-blockers that block exchange domains on mobile
+  // --- Fetch: try Coinbase direct, fall back to Vercel proxy if blocked ---
   var realFetch=window.fetch;
+  var cbMode='direct'; // 'direct' or 'proxy' — cached after first success
   window.fetch=function(input,init){
     var url=(typeof input==='string')?input:(input&&input.url?input.url:'');
-    if(url.indexOf('api.exchange.coinbase.com')!==-1){
-      var proxyUrl='/api/proxy?url='+encodeURIComponent(url);
-      console.log(L+'Proxying Coinbase:',url.split('?')[0]);
-      return realFetch(proxyUrl,init);
+    if(url.indexOf('api.exchange.coinbase.com')===-1) return realFetch(input,init);
+    if(cbMode==='proxy'){
+      return realFetch('/api/proxy?url='+encodeURIComponent(url),init);
     }
-    return realFetch(input,init);
+    return realFetch(url,init).then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r;
+    }).catch(function(){
+      console.log(L+'Direct blocked, switching to proxy');
+      cbMode='proxy';
+      return realFetch('/api/proxy?url='+encodeURIComponent(url),init);
+    });
   };
-  console.log(L+'Coinbase fetch proxy + WS polyfill active');
+  console.log(L+'Coinbase fetch (direct+proxy fallback) + WS polyfill active');
 
   // --- WebSocket polyfill: replace Coinbase WS with REST polling ---
   var RealWS=window.WebSocket;
@@ -95,7 +101,7 @@ export default defineConfig(({ mode }) => {
           });
         };
         stats();tick();
-        s._iv.push(setInterval(tick,2000));
+        s._iv.push(setInterval(tick,1000));
         s._iv.push(setInterval(stats,30000));
       }
     };
