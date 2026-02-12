@@ -1,5 +1,5 @@
 // Basic service worker for PWA install support and app shell caching
-const CACHE_NAME = 'tradesim-v1';
+const CACHE_NAME = 'tradesim-v2';
 
 // Cache the app shell on install
 self.addEventListener('install', (event) => {
@@ -24,6 +24,11 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET and API requests
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
+
+  // Only cache same-origin assets (HTML, JS, CSS, images)
+  // Let cross-origin API requests (Coinbase, Jupiter, DexScreener, etc.) pass through directly
+  if (url.origin !== self.location.origin) return;
+
   if (url.pathname.startsWith('/api/')) return;
 
   event.respondWith(
