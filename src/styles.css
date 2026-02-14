@@ -2769,76 +2769,218 @@ body {
     --right-sidebar-width: 100%;
   }
 
-  .main-content {
-    flex-direction: column;
-    overflow-y: auto;
+  /* Allow scrolling on mobile */
+  body {
+    overflow: auto;
     overflow-x: hidden;
   }
 
+  .app {
+    overflow: visible;
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  .main-content {
+    flex-direction: column;
+    overflow: visible;
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
   .main-content.no-header {
-    height: 100vh;
-    height: 100dvh;
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 
-  /* Hide sidebars by default on mobile - show via toggle */
-  .left-sidebar,
-  .right-sidebar {
-    width: 100%;
-    border: none;
-    max-height: none;
-  }
-
+  /* ── Left sidebar: collapsed by default, thin horizontal bar ── */
   .left-sidebar {
-    border-bottom: 1px solid var(--border-color);
+    width: 100%;
     border-right: none;
-    max-height: 200px;
+    border-bottom: 1px solid var(--border-color);
+    max-height: 160px;
     overflow-y: auto;
   }
 
-  .right-sidebar {
-    border-top: 1px solid var(--border-color);
-    border-left: none;
+  .left-sidebar .sidebar-header {
+    padding: 6px 12px;
   }
 
-  /* Collapsed sidebar labels horizontal on mobile */
+  /* Collapsed sidebar: horizontal bar on mobile */
   .sidebar-collapsed {
     writing-mode: horizontal-tb;
     width: 100%;
     height: auto;
-    padding: 8px 16px;
+    padding: 10px 16px;
     flex-direction: row;
     justify-content: center;
+    gap: 8px;
   }
 
   .sidebar-collapsed .collapsed-label {
+    writing-mode: horizontal-tb;
     transform: none;
   }
 
-  /* Chart fills available space */
-  .chart-grid {
-    min-height: 300px;
-    flex: 1;
+  /* ── Right sidebar: full width, no border ── */
+  .right-sidebar {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border-color);
+    padding: 10px;
+    gap: 10px;
   }
 
-  /* Hide pop-out buttons on mobile (no multi-window) */
-  .sidebar-btn[title="Pop out"] {
+  /* ── Chart: fixed height so trading form is visible ── */
+  .chart-grid {
+    min-height: 280px;
+    height: 55vh;
+    height: 55dvh;
+    flex: none;
+  }
+
+  .chart-container {
+    min-height: 200px;
+  }
+
+  /* Hide drawing tools toolbar on mobile (no room for it) */
+  .chart-tools {
     display: none;
   }
 
-  /* Layout selector - compact on mobile */
+  /* ── Chart controls: compact header ── */
+  .chart-controls {
+    padding: 6px 10px;
+  }
+
+  .chart-header {
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .symbol-info {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .symbol-name {
+    font-size: 15px;
+  }
+
+  .symbol-price {
+    font-size: 14px;
+  }
+
+  .symbol-change {
+    font-size: 12px;
+  }
+
+  .position-pnl-tag {
+    font-size: 10px;
+    margin-left: 0;
+  }
+
+  /* Timeframe buttons: horizontal scroll, larger touch targets */
+  .timeframe-selector {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 6px;
+    padding-bottom: 2px;
+  }
+
+  .timeframe-selector::-webkit-scrollbar {
+    display: none;
+  }
+
+  .timeframe-btn {
+    min-height: 36px;
+    min-width: 44px;
+    padding: 6px 12px;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  /* Hide pop-out buttons and layout selector on mobile */
+  .sidebar-btn[title="Pop out"],
+  .popout-btn,
   .layout-selector {
     display: none;
   }
 
-  /* Order form - larger touch targets */
-  .order-form input,
-  .order-form select,
-  .order-form button {
-    min-height: 44px;
-    font-size: 16px; /* Prevents iOS zoom on focus */
+  /* ── Order form: large touch targets ── */
+  .order-form {
+    padding: 10px;
+    gap: 10px;
   }
 
-  /* Trading panel tabs - full width */
+  .order-form input,
+  .order-form select {
+    min-height: 48px;
+    font-size: 16px; /* Prevents iOS zoom on focus */
+    padding: 12px;
+  }
+
+  .side-tab {
+    min-height: 48px;
+    padding: 12px;
+    font-size: 16px;
+  }
+
+  .order-type-select select {
+    min-height: 48px;
+    font-size: 16px;
+    padding: 12px;
+  }
+
+  .input-mode-toggle {
+    min-height: 40px;
+  }
+
+  .mode-btn {
+    min-height: 40px;
+    padding: 10px;
+    font-size: 13px;
+  }
+
+  /* Percentage buttons: much larger for touch */
+  .pct-buttons {
+    gap: 8px;
+  }
+
+  .pct-btn {
+    min-height: 44px;
+    padding: 10px 8px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 6px;
+  }
+
+  .order-input-group label {
+    font-size: 12px;
+  }
+
+  .order-input-group input {
+    padding: 12px;
+  }
+
+  .order-submit-btn {
+    min-height: 52px;
+    padding: 16px;
+    font-size: 16px;
+  }
+
+  .close-all-btn {
+    min-height: 44px;
+    padding: 12px;
+    font-size: 14px;
+  }
+
+  /* ── Trading panel tabs ── */
   .panel-tabs {
     width: 100%;
   }
@@ -2847,9 +2989,56 @@ body {
     flex: 1;
     text-align: center;
     min-height: 44px;
+    font-size: 13px;
   }
 
-  /* Settings modal - full screen on mobile */
+  /* ── Position info bar: larger text ── */
+  .position-info-bar {
+    padding: 8px;
+  }
+
+  .position-info-row {
+    font-size: 13px;
+    padding: 4px 0;
+  }
+
+  /* ── Order summary: readable ── */
+  .order-summary {
+    padding: 10px;
+  }
+
+  .summary-row {
+    font-size: 13px;
+    padding: 5px 0;
+  }
+
+  /* ── Watchlist items: larger touch targets ── */
+  .watchlist-item {
+    min-height: 48px;
+    padding: 10px 12px;
+  }
+
+  /* ── Position cards ── */
+  .position-card {
+    margin: 0;
+  }
+
+  /* ── Balance card: compact ── */
+  .balance-card {
+    padding: 8px;
+  }
+
+  /* ── Connection status ── */
+  .connection-status {
+    gap: 4px;
+  }
+
+  .live-badge {
+    font-size: 8px;
+    padding: 1px 4px;
+  }
+
+  /* ── Settings modal: full screen ── */
   .settings-modal {
     width: 100%;
     max-width: 100%;
@@ -2858,30 +3047,23 @@ body {
     border-radius: 0;
   }
 
-  /* Chart controls - wrap on small screens */
-  .chart-controls {
-    flex-wrap: wrap;
-    gap: 4px;
+  /* ── Floating settings gear: reposition for mobile ── */
+  .floating-settings {
+    top: 8px;
+    right: 8px;
+    width: 36px;
+    height: 36px;
+    z-index: 200;
   }
 
-  .chart-controls .timeframe-buttons {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+  .floating-settings svg {
+    width: 18px;
+    height: 18px;
   }
 
-  /* Watchlist items - larger touch targets */
-  .watchlist-item {
-    min-height: 44px;
-    padding: 8px 12px;
-  }
-
-  /* Position cards - full width */
-  .position-card {
-    margin: 0;
-  }
-
-  /* Balance card - compact */
-  .balance-card {
-    padding: 8px;
+  /* ── Market status badge ── */
+  .market-status {
+    font-size: 9px;
+    padding: 1px 5px;
   }
 }

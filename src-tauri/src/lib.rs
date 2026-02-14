@@ -115,19 +115,25 @@ struct YahooChartResponse {
 #[derive(Debug, Deserialize)]
 struct YahooChartResult {
     result: Option<Vec<YahooChartData>>,
+    error: Option<serde_json::Value>,
 }
 
 // Trading period info
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct TradingPeriod {
+    #[serde(default)]
     start: i64,
+    #[serde(default)]
     end: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct CurrentTradingPeriod {
+    #[serde(default)]
     pre: TradingPeriod,
+    #[serde(default)]
     regular: TradingPeriod,
+    #[serde(default)]
     post: TradingPeriod,
 }
 
@@ -171,10 +177,15 @@ struct YahooIndicators {
 
 #[derive(Debug, Deserialize)]
 struct YahooQuoteData {
+    #[serde(default)]
     open: Vec<Option<f64>>,
+    #[serde(default)]
     high: Vec<Option<f64>>,
+    #[serde(default)]
     low: Vec<Option<f64>>,
+    #[serde(default)]
     close: Vec<Option<f64>>,
+    #[serde(default)]
     volume: Vec<Option<i64>>,
 }
 
@@ -213,196 +224,264 @@ struct StockQuote {
 
 #[tauri::command]
 async fn fetch_stock_candles(symbol: String, interval: String, range: String) -> Result<StockChartResponse, String> {
-    // Add timestamp to bust cache
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
-    let url = format!(
-        "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval={}&range={}&_t={}",
-        symbol, interval, range, timestamp
-    );
-
     let client = reqwest::Client::builder()
         .no_proxy()
+        .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
-    let response = client
-        .get(&url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
 
-    let data: YahooChartResponse = response.json().await.map_err(|e| e.to_string())?;
+    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    let hosts = ["query2.finance.yahoo.com", "query1.finance.yahoo.com"];
+    let mut last_error = String::from("No Yahoo Finance host responded");
 
-    if let Some(results) = data.chart.result {
-        if let Some(result) = results.first() {
-            let meta = &result.meta;
-            let regular_price = meta.regular_market_price.unwrap_or(0.0);
-            let previous_close = meta.previous_close.unwrap_or(0.0);
-            let day_high = meta.regular_market_day_high.unwrap_or(0.0);
-            let day_low = meta.regular_market_day_low.unwrap_or(0.0);
-            let volume = meta.regular_market_volume.unwrap_or(0);
+    for host in &hosts {
+        let url = format!(
+            "https://{}/v8/finance/chart/{}?interval={}&range={}&_t={}",
+            host, symbol, interval, range, timestamp
+        );
 
-            // Use extended hours price if available, otherwise regular market price
-            let current_price = meta.post_market_price
-                .or(meta.pre_market_price)
-                .unwrap_or(regular_price);
+        let response = match client
+            .get(&url)
+            .header("User-Agent", ua)
+            .header("Accept", "application/json")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[Yahoo] {} request failed: {}", host, e);
+                last_error = format!("{} request failed: {}", host, e);
+                continue;
+            }
+        };
 
-            if let Some(timestamps) = &result.timestamp {
-                if let Some(quote) = result.indicators.quote.first() {
-                    let mut candles = Vec::new();
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            eprintln!("[Yahoo] {} returned HTTP {}: {}", host, status, &body[..body.len().min(500)]);
+            last_error = format!("HTTP {} from {}", status, host);
+            continue;
+        }
 
-                    for i in 0..timestamps.len() {
-                        if let (Some(open), Some(high), Some(low), Some(close)) = (
-                            quote.open.get(i).and_then(|v| *v),
-                            quote.high.get(i).and_then(|v| *v),
-                            quote.low.get(i).and_then(|v| *v),
-                            quote.close.get(i).and_then(|v| *v),
-                        ) {
-                            candles.push(StockCandle {
-                                time: timestamps[i] * 1000, // Convert to milliseconds
-                                open,
-                                high,
-                                low,
-                                close,
-                                volume: quote.volume.get(i).and_then(|v| *v).unwrap_or(0),
-                            });
+        let data: YahooChartResponse = match response.json().await {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("[Yahoo] {} JSON parse error: {}", host, e);
+                last_error = format!("JSON parse error: {}", e);
+                continue;
+            }
+        };
+
+        // Check for API-level error
+        if let Some(ref err) = data.chart.error {
+            eprintln!("[Yahoo] API error: {:?}", err);
+            last_error = format!("Yahoo API error: {}", err);
+            continue;
+        }
+
+        if let Some(results) = data.chart.result {
+            if let Some(result) = results.first() {
+                let meta = &result.meta;
+                let regular_price = meta.regular_market_price.unwrap_or(0.0);
+                let previous_close = meta.previous_close.unwrap_or(0.0);
+                let day_high = meta.regular_market_day_high.unwrap_or(0.0);
+                let day_low = meta.regular_market_day_low.unwrap_or(0.0);
+                let volume = meta.regular_market_volume.unwrap_or(0);
+
+                let current_price = meta.post_market_price
+                    .or(meta.pre_market_price)
+                    .unwrap_or(regular_price);
+
+                if let Some(timestamps) = &result.timestamp {
+                    if let Some(quote) = result.indicators.quote.first() {
+                        let mut candles = Vec::new();
+
+                        for i in 0..timestamps.len() {
+                            if let (Some(open), Some(high), Some(low), Some(close)) = (
+                                quote.open.get(i).and_then(|v| *v),
+                                quote.high.get(i).and_then(|v| *v),
+                                quote.low.get(i).and_then(|v| *v),
+                                quote.close.get(i).and_then(|v| *v),
+                            ) {
+                                candles.push(StockCandle {
+                                    time: timestamps[i] * 1000,
+                                    open,
+                                    high,
+                                    low,
+                                    close,
+                                    volume: quote.volume.get(i).and_then(|v| *v).unwrap_or(0),
+                                });
+                            }
                         }
-                    }
 
-                    return Ok(StockChartResponse {
-                        candles,
-                        current_price,
-                        previous_close,
-                        day_high,
-                        day_low,
-                        volume,
-                    });
+                        eprintln!("[Yahoo] {} OK: {} candles for {}", host, candles.len(), symbol);
+                        return Ok(StockChartResponse {
+                            candles,
+                            current_price,
+                            previous_close,
+                            day_high,
+                            day_low,
+                            volume,
+                        });
+                    }
                 }
             }
         }
+
+        last_error = format!("No chart data in response from {}", host);
     }
 
-    Err("No data returned from Yahoo Finance".to_string())
+    Err(last_error)
 }
 
 #[tauri::command]
 async fn fetch_stock_quote(symbol: String) -> Result<StockQuote, String> {
-    // Use v8 chart API instead of v6 quote (which is now blocked)
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
-    // Use 1d range with 1m interval to get latest data, include extended hours
-    let url = format!(
-        "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval=1m&range=1d&includePrePost=true&_t={}",
-        symbol, timestamp
-    );
-
     let client = reqwest::Client::builder()
         .no_proxy()
+        .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
 
-    let response = client
-        .get(&url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    let hosts = ["query2.finance.yahoo.com", "query1.finance.yahoo.com"];
+    let mut last_error = String::from("No Yahoo Finance host responded");
 
-    let data: YahooChartResponse = response.json().await.map_err(|e| e.to_string())?;
+    for host in &hosts {
+        let url = format!(
+            "https://{}/v8/finance/chart/{}?interval=1m&range=1d&includePrePost=true&_t={}",
+            host, symbol, timestamp
+        );
 
-    if let Some(results) = data.chart.result {
-        if let Some(result) = results.first() {
-            let meta = &result.meta;
-            let regular_price = meta.regular_market_price.unwrap_or(0.0);
-            let previous_close = meta.previous_close.unwrap_or(regular_price);
+        let response = match client
+            .get(&url)
+            .header("User-Agent", ua)
+            .header("Accept", "application/json")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[Yahoo] quote {} failed: {}", host, e);
+                last_error = format!("{} request failed: {}", host, e);
+                continue;
+            }
+        };
 
-            // Determine market status based on current time and trading periods
-            let now = timestamp as i64;
-            let market_status = if let Some(ref period) = meta.current_trading_period {
-                if now >= period.pre.start && now < period.pre.end {
-                    "pre"
-                } else if now >= period.regular.start && now < period.regular.end {
-                    "regular"
-                } else if now >= period.post.start && now < period.post.end {
-                    "post"
-                } else {
-                    "closed"
-                }
-            } else {
-                "regular" // Default assumption
-            };
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            eprintln!("[Yahoo] quote {} HTTP {}: {}", host, status, &body[..body.len().min(500)]);
+            last_error = format!("HTTP {} from {}", status, host);
+            continue;
+        }
 
-            // Get the last candle's close price (most recent trading price)
-            let last_candle_price = if let Some(ref timestamps) = result.timestamp {
-                if let Some(quote) = result.indicators.quote.first() {
-                    // Find the last valid close price
-                    let mut last_price = regular_price;
-                    for i in (0..timestamps.len()).rev() {
-                        if let Some(Some(close)) = quote.close.get(i) {
-                            last_price = *close;
-                            break;
-                        }
+        let data: YahooChartResponse = match response.json().await {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("[Yahoo] quote {} parse error: {}", host, e);
+                last_error = format!("JSON parse error: {}", e);
+                continue;
+            }
+        };
+
+        if let Some(ref err) = data.chart.error {
+            eprintln!("[Yahoo] quote API error: {:?}", err);
+            last_error = format!("Yahoo API error: {}", err);
+            continue;
+        }
+
+        if let Some(results) = data.chart.result {
+            if let Some(result) = results.first() {
+                let meta = &result.meta;
+                let regular_price = meta.regular_market_price.unwrap_or(0.0);
+                let previous_close = meta.previous_close.unwrap_or(regular_price);
+
+                let now = timestamp as i64;
+                let market_status = if let Some(ref period) = meta.current_trading_period {
+                    if now >= period.pre.start && now < period.pre.end {
+                        "pre"
+                    } else if now >= period.regular.start && now < period.regular.end {
+                        "regular"
+                    } else if now >= period.post.start && now < period.post.end {
+                        "post"
+                    } else {
+                        "closed"
                     }
-                    last_price
+                } else {
+                    "regular"
+                };
+
+                let last_candle_price = if let Some(ref timestamps) = result.timestamp {
+                    if let Some(quote) = result.indicators.quote.first() {
+                        let mut last_price = regular_price;
+                        for i in (0..timestamps.len()).rev() {
+                            if let Some(Some(close)) = quote.close.get(i) {
+                                last_price = *close;
+                                break;
+                            }
+                        }
+                        last_price
+                    } else {
+                        regular_price
+                    }
                 } else {
                     regular_price
-                }
-            } else {
-                regular_price
-            };
+                };
 
-            // Determine which price to use based on market status
-            let (price, change) = match market_status {
-                "post" => {
-                    // After-hours (4-8 PM): use last candle price (most recent trade)
-                    let current_price = meta.post_market_price.unwrap_or(last_candle_price);
-                    let price_change = meta.post_market_change.unwrap_or(current_price - previous_close);
-                    (current_price, price_change)
-                }
-                "pre" => {
-                    // Pre-market (4-9:30 AM): use last candle price
-                    let current_price = meta.pre_market_price.unwrap_or(last_candle_price);
-                    let price_change = meta.pre_market_change.unwrap_or(current_price - previous_close);
-                    (current_price, price_change)
-                }
-                "closed" => {
-                    // Market closed (8 PM - 4 AM): use regular market close price
-                    // (overnight/futures data not available via this API)
-                    (regular_price, regular_price - previous_close)
-                }
-                _ => {
-                    // Regular hours - use regular market price
-                    (regular_price, regular_price - previous_close)
-                }
-            };
+                let (price, change) = match market_status {
+                    "post" => {
+                        let current_price = meta.post_market_price.unwrap_or(last_candle_price);
+                        let price_change = meta.post_market_change.unwrap_or(current_price - previous_close);
+                        (current_price, price_change)
+                    }
+                    "pre" => {
+                        let current_price = meta.pre_market_price.unwrap_or(last_candle_price);
+                        let price_change = meta.pre_market_change.unwrap_or(current_price - previous_close);
+                        (current_price, price_change)
+                    }
+                    "closed" => {
+                        (regular_price, regular_price - previous_close)
+                    }
+                    _ => {
+                        (regular_price, regular_price - previous_close)
+                    }
+                };
 
-            let change_percent = if previous_close > 0.0 {
-                (change / previous_close) * 100.0
-            } else {
-                0.0
-            };
+                let change_percent = if previous_close > 0.0 {
+                    (change / previous_close) * 100.0
+                } else {
+                    0.0
+                };
 
-            return Ok(StockQuote {
-                symbol: meta.symbol.clone().unwrap_or(symbol),
-                price,
-                change,
-                change_percent,
-                high: meta.regular_market_day_high.unwrap_or(0.0),
-                low: meta.regular_market_day_low.unwrap_or(0.0),
-                volume: meta.regular_market_volume.unwrap_or(0),
-                market_status: market_status.to_string(),
-            });
+                return Ok(StockQuote {
+                    symbol: meta.symbol.clone().unwrap_or(symbol),
+                    price,
+                    change,
+                    change_percent,
+                    high: meta.regular_market_day_high.unwrap_or(0.0),
+                    low: meta.regular_market_day_low.unwrap_or(0.0),
+                    volume: meta.regular_market_volume.unwrap_or(0),
+                    market_status: market_status.to_string(),
+                });
+            }
         }
+
+        last_error = format!("No quote data in response from {}", host);
     }
 
-    Err("No quote data returned from Yahoo Finance".to_string())
+    Err(last_error)
 }
 
 // DexScreener response structures
